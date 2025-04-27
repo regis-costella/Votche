@@ -1,0 +1,175 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoTchê - Votação</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+</head>
+<body class="bg-gradient-to-r from-blue-400 to-blue-700 min-h-screen flex items-center justify-center">
+  <div class="bg-white p-8 rounded-lg shadow-lg max-w-md w-full text-center">
+    <h1 class="text-4xl font-bold mb-4 text-gray-800">VoTchê - Sistema de Votação</h1>
+    <p class="text-gray-600 mb-4">Escolha a reunião para votar:</p>
+
+    <select id="selectReuniao" class="w-full mb-4 p-2 rounded bg-gray-100"></select>
+
+    <p id="contador" class="text-lg font-bold text-red-500 mb-4"></p>
+    <div id="perguntasVotacao" class="mt-4"></div>
+    <p id="mensagem" class="mt-4 text-gray-700"></p>
+
+    <a href="admin_com_reunioes.html" class="mt-6 inline-block text-blue-500 hover:text-blue-700">Acesso do Administrador</a>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyCWSmAtAl_fdi2G4Q_-PCttLU7G8WTZ0ZM",
+      authDomain: "sistemavotacao-4a2bb.firebaseapp.com",
+      databaseURL: "https://sistemavotacao-4a2bb-default-rtdb.firebaseio.com",
+      projectId: "sistemavotacao-4a2bb"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let reuniaoSelecionada = "";
+
+    function carregarReunioes() {
+      const select = document.getElementById("selectReuniao");
+      db.ref("reunioes").once("value", (snapshot) => {
+        select.innerHTML = "<option value=''>Selecione uma reunião</option>";
+        snapshot.forEach((child) => {
+          const option = document.createElement("option");
+          option.value = child.key;
+          option.textContent = child.val().titulo;
+          select.appendChild(option);
+        });
+      });
+
+      select.onchange = () => {
+        reuniaoSelecionada = select.value;
+        if (reuniaoSelecionada) {
+          localStorage.setItem("usuarioVotou_" + reuniaoSelecionada, "false");
+          carregarPerguntasParaVotacao();
+          atualizarContador();
+        }
+      };
+    }
+
+    function verificarVoto() {
+      return localStorage.getItem("usuarioVotou_" + reuniaoSelecionada) === "true";
+    }
+
+    
+    function votarFirebase(perguntaId, opcao) {
+    if (!reuniaoSelecionada) return;
+
+    if (verificarVoto()) {
+    alert("Você já votou nesta reunião.");
+    return;
+    }
+
+    const tempoRef = db.ref(`reunioes/${reuniaoSelecionada}/config/votacao`);
+    tempoRef.once("value").then((snapshot) => {
+    const dadosVotacao = snapshot.val();
+    if (!dadosVotacao || !dadosVotacao.tempoInicial || !dadosVotacao.tempoFinal) {
+      alert("A votação ainda não foi iniciada.");
+      return;
+    }
+
+    if (dadosVotacao.encerrada === true) {
+      alert("A votação foi encerrada antecipadamente.");
+      return;
+    }
+
+    const agora = Date.now();
+    if (agora < dadosVotacao.tempoInicial) {
+      alert("A votação ainda não começou.");
+      return;
+    }
+    if (agora > dadosVotacao.tempoFinal) {
+      alert("A votação já foi encerrada.");
+      return;
+    }
+
+    // Se chegou aqui, pode votar
+    const votoRef = db.ref(`reunioes/${reuniaoSelecionada}/perguntas/${perguntaId}/opcoes/${opcao}`);
+    votoRef.transaction((val) => (val || 0) + 1);
+    localStorage.setItem("usuarioVotou_" + reuniaoSelecionada, "true");
+    document.getElementById("mensagem").innerText = `Você votou na opção "${opcao}"`;
+  }).catch((error) => {
+    console.error("Erro ao verificar tempo de votação:", error);
+    alert("Erro ao verificar o status da votação.");
+  });
+}
+
+
+    function carregarPerguntasParaVotacao() {
+      db.ref(`reunioes/${reuniaoSelecionada}/perguntas`).on("value", (snapshot) => {
+        const container = document.getElementById("perguntasVotacao");
+        container.innerHTML = "";
+
+        if (!snapshot.exists()) {
+          container.innerHTML = "<p class='text-gray-600'>Nenhuma pergunta disponível.</p>";
+          return;
+        }
+
+        snapshot.forEach((child) => {
+          const pergunta = child.val();
+          const perguntaId = child.key;
+
+          const div = document.createElement("div");
+          div.className = "mb-6 p-4 bg-gray-100 rounded-lg shadow";
+
+          const titulo = document.createElement("p");
+          titulo.className = "text-lg font-semibold text-gray-800 mb-2";
+          titulo.innerText = pergunta.texto;
+
+          div.appendChild(titulo);
+
+          for (const opcao in pergunta.opcoes) {
+            const botao = document.createElement("button");
+            botao.className = "w-full bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-700 mt-2";
+            botao.innerText = opcao;
+            botao.onclick = () => votarFirebase(perguntaId, opcao);
+            div.appendChild(botao);
+          }
+
+          container.appendChild(div);
+        });
+      });
+    }
+
+    function atualizarContador() {
+      const ref = db.ref(`reunioes/${reuniaoSelecionada}/config/votacao/tempoFinal`);
+      ref.on("value", (snapshot) => {
+        const tempoFinal = snapshot.val();
+        const contador = document.getElementById("contador");
+
+        if (!tempoFinal) {
+          contador.innerText = "Nenhuma votação ativa.";
+          return;
+        }
+
+        function atualizar() {
+          const restante = tempoFinal - Date.now();
+          if (restante <= 0) {
+            contador.innerText = "Votação encerrada!";
+            clearInterval(intervalo);
+            return;
+          }
+          const m = Math.floor(restante / 60000);
+          const s = Math.floor((restante % 60000) / 1000);
+          contador.innerText = `Tempo restante: ${m}m ${s}s`;
+        }
+
+        atualizar();
+        var intervalo = setInterval(atualizar, 1000);
+      });
+    }
+
+    window.onload = carregarReunioes;
+  </script>
+</body>
+</html>
